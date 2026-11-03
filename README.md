@@ -92,8 +92,10 @@ that chain. The rules that follow from this:
 
 - Link `juce::juce_audio_processors`, not `juce_audio_utils`. `juce_audio_utils` brings
   in `DiscRecording` and other modules we don't need.
-- Keep `-Wl,-dead_strip_dylibs` on the AU target, so frameworks with no used symbols are
-  dropped. WebKit is one: `juce_gui_extra` always links it.
+- WebKit is removed from `juce_gui_extra`'s link list in `CMakeLists.txt`. That module
+  always links it, even with the web browser turned off, and `-dead_strip_dylibs` doesn't
+  drop it. Keep `-Wl,-dead_strip_dylibs` on the AU target anyway, for anything else
+  that's unused.
 - `check_macos_compat.sh` fails the build if WebKit, DiscRecording, MobileDevice or
   UniformTypeIdentifiers is linked.
 - Use `scripts/sierra_dlopen_test.py` on the target Mac to find which framework fails

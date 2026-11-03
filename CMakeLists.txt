@@ -32,6 +32,17 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(JUCE)
 
+# juce_gui_extra always links WebKit, even with JUCE_WEB_BROWSER=0, and
+# -dead_strip_dylibs doesn't remove it. We never use it, and every extra system
+# framework is a load-time risk on the Sierra machine (see README.md), so remove it
+# from the module's link interface. If anything did need WebKit, linking would fail
+# loudly with undefined symbols.
+get_target_property(_juce_gui_extra_libs juce_gui_extra INTERFACE_LINK_LIBRARIES)
+if(_juce_gui_extra_libs)
+    list(FILTER _juce_gui_extra_libs EXCLUDE REGEX "WebKit")
+    set_target_properties(juce_gui_extra PROPERTIES INTERFACE_LINK_LIBRARIES "${_juce_gui_extra_libs}")
+endif()
+
 juce_add_plugin(LoopStationGain
     COMPANY_NAME              "LoopStation"
     BUNDLE_ID                 "com.loopstation.gain"

@@ -1,0 +1,85 @@
+name: Build AU (macOS 10.12, x86_64)
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PLUGIN_TARGET: LoopStationGain_AU
+  COMPONENT: build/LoopStationGain_artefacts/Release/AU/LoopStationGain.component
+  ZIP_NAME: LoopStationGain-AU-macOS10.12-x86_64.zip
+
+defaults:
+  run:
+    # Explicit "bash" makes GitHub run with -eo pipefail, so "| tee" can't hide failures.
+    shell: bash
+
+jobs:
+  build:
+    # Apple-silicon runner, cross-compiling for x86_64. macos-14 is used because it
+    # still ships Xcode 15.x, the oldest Xcode available on GitHub-hosted runners
+    # (see README.md, "Risks").
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select oldest usable Xcode (15.1+)
+        # Oldest Xcode = closest to official 10.12 support. Xcode 15.0.x is skipped:
+        # its new linker can produce broken binaries and JUCE 7.0.12 refuses to build
+        # with it ("Please upgrade to Xcode 15.1 or higher").
+        run: |
+          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | grep -v '/Xcode_15\.0' | sort -V | head -n1 || true)"
+          if [[ -n "$XC" ]]; then
+            echo "Using $XC"
+            sudo xcode-select -s "$XC/Contents/Developer"
+          else
+            echo "No Xcode 15.1+ found; keeping the runner default"
+          fi
+          xcodebuild -version
+          clang --version
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G "Unix Makefiles" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=10.12 \
+            -DCMAKE_OSX_ARCHITECTURES=x86_64
+
+      - name: Build
+        run: cmake --build build --target "$PLUGIN_TARGET" --parallel "$(sysctl -n hw.ncpu)"
+
+      - name: Check Sierra / x86_64 compatibility
+        run: |
+          mkdir -p dist
+          scripts/check_macos_compat.sh "$COMPONENT" 10.12 | tee dist/compat-check.txt
+
+      - name: auval (best effort, under Rosetta)
+        # The runner is Apple silicon; an x86_64-only AU can only be validated by an
+        # x86_64 host process. This step is informative only; the real test is
+        # auval on the Sierra machine (see INSTALL.md).
+        continue-on-error: true
+        run: |
+          /usr/sbin/softwareupdate --install-rosetta --agree-to-license || true
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$COMPONENT" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+          arch -x86_64 /usr/bin/auval -v aufx Lsg1 Lsau | tee dist/auval.txt
+
+      - name: Package (ditto keeps the bundle's permissions intact)
+        run: |
+          {
+            echo "commit: $GITHUB_SHA"
+            xcodebuild -version
+            echo "deployment target: 10.12, arch: x86_64"
+          } > dist/BUILD_INFO.txt
+          ditto -c -k --keepParent "$COMPONENT" "dist/$ZIP_NAME"
+          cp scripts/sierra_dlopen_test.py dist/
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LoopStationGain-AU-x86_64
+          path: dist/
+          if-no-files-found: error

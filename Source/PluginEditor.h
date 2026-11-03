@@ -3,19 +3,40 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "PluginProcessor.h"
 
-class LoopStationGainEditor final : public juce::AudioProcessorEditor
+class LoopStationEditor final : public juce::AudioProcessorEditor,
+                                private juce::Timer
 {
 public:
-    explicit LoopStationGainEditor (LoopStationGainProcessor&);
-    ~LoopStationGainEditor() override = default;
+    explicit LoopStationEditor (LoopStationProcessor&);
+    ~LoopStationEditor() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
-    juce::Slider gainKnob;
-    juce::Label  gainLabel;
-    juce::AudioProcessorValueTreeState::SliderAttachment gainAttachment;
+    void timerCallback() override;
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoopStationGainEditor)
+    struct ActionRow
+    {
+        juce::TextButton button, learn;
+        juce::Label binding;
+    };
+
+    LoopStationProcessor& proc;
+
+    juce::Label stateLabel, infoLabel;
+    ActionRow rows[loopstation::numLoopActions];
+
+    juce::Slider loopLevel, dryLevel;
+    juce::Label loopLevelLabel, dryLevelLabel, syncLabel, gridLabel;
+    juce::ComboBox syncBox, gridBox;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopLevelAttachment, dryLevelAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncAttachment, gridAttachment;
+
+    juce::Rectangle<int> progressArea;
+    float progress = 0.0f;
+    juce::Colour stateColour;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (LoopStationEditor)
 };

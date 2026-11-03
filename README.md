@@ -13,7 +13,13 @@ macOS 10.12.6 Sierra**.
 
 Step 1, the gain pass-through proof-of-concept, was tested on the target machine (Intel
 Mac, macOS 10.12.6, Logic Pro X 10.2.3): it loads, passes auval, and works in Logic.
-Step 2 hasn't been tested there yet.
+Step 2 has also been tested there and works as expected:
+- `auval -v aumf Lsl1 Lsau` passes;
+- the plugin loads as an AU MIDI-controlled effect in an instrument slot, and hears
+  audio from the Side Chain menu;
+- MIDI keys and MIDI learn trigger the actions;
+- tempo sync works;
+- settings are saved with the project.
 
 To install and use it, see **[INSTALL.md](INSTALL.md)**.
 
@@ -171,11 +177,11 @@ on that machine, and most JUCE AUs do. The rules that follow from this:
    it a *different* plugin, and saved projects lose it. Bump `VERSION` in `CMakeLists.txt`
    for each release so Logic rescans. (The step-1 gain plugin, `aufx` / `Lsg1`, is a
    separate plugin.)
-6. **Routing in Logic 10.2.3 hasn't been tried yet.** A MIDI-controlled effect goes in a
-   software instrument track's instrument slot, and gets its audio from the Side Chain menu
-   (see INSTALL.md). We don't know whether Logic 10.2.3 sends that audio to the plugin's
-   main input or to a separate side-chain bus. The plugin has both inputs and adds them
-   together, so it should hear the audio either way. This has to be confirmed in Logic.
+6. **Routing in Logic.** A MIDI-controlled effect goes in a software instrument track's
+   instrument slot, and gets its audio from the Side Chain menu (see INSTALL.md). This
+   works in Logic 10.2.3. The plugin accepts that audio on its main input and on a
+   side-chain input, and adds the two together. Keep it that way, because we haven't
+   checked which of the two inputs Logic actually uses.
 7. **JUCE 7 gets no more updates.** This is fine for a fixed, old target. We would only
    upgrade if we hit a bug.
 8. **Downloading on Sierra.** Artifacts need a GitHub login and are kept for 90 days.

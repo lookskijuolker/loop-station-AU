@@ -71,9 +71,7 @@ The audio to loop comes in through the plugin's **Side Chain** menu.
 4. Keep the instrument track **selected** (or record-armed), so that MIDI from your
    keyboard reaches it.
 
-> If **AU MIDI-controlled Effects** isn't in the instrument slot menu, or the plugin
-> doesn't receive any audio from the side chain, tell me exactly what you see. I don't
-> have a Logic 10.2.3 to try it on, and the fix depends on how that version routes audio.
+This setup has been tested in Logic Pro X 10.2.3 on macOS 10.12.6.
 
 ## 6. Controls
 

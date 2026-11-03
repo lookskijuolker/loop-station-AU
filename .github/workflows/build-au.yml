@@ -6,9 +6,12 @@ on:
   workflow_dispatch:
 
 env:
-  PLUGIN_TARGET: LoopStationGain_AU
-  COMPONENT: build/LoopStationGain_artefacts/Release/AU/LoopStationGain.component
-  ZIP_NAME: LoopStationGain-AU-macOS10.12-x86_64.zip
+  PLUGIN_TARGET: LoopStation_AU
+  COMPONENT: build/LoopStation_artefacts/Release/AU/LoopStation.component
+  ZIP_NAME: LoopStation-AU-macOS10.12-x86_64.zip
+  AU_TYPE: aumf
+  AU_SUBTYPE: Lsl1
+  AU_MANUFACTURER: Lsau
 
 defaults:
   run:
@@ -40,6 +43,14 @@ jobs:
           xcodebuild -version
           clang --version
 
+      - name: Engine unit tests (native, no JUCE)
+        run: |
+          mkdir -p build-tests
+          clang++ -std=c++17 -O1 -g -Wall -Wextra -fsanitize=address,undefined \
+            -I Source Source/LooperEngine.cpp Source/MidiMap.cpp tests/engine_tests.cpp \
+            -o build-tests/engine_tests
+          build-tests/engine_tests
+
       - name: Configure
         run: |
           cmake -S . -B build -G "Unix Makefiles" \
@@ -65,7 +76,7 @@ jobs:
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R "$COMPONENT" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar 2>/dev/null || true
-          arch -x86_64 /usr/bin/auval -v aufx Lsg1 Lsau | tee dist/auval.txt
+          arch -x86_64 /usr/bin/auval -v "$AU_TYPE" "$AU_SUBTYPE" "$AU_MANUFACTURER" | tee dist/auval.txt
 
       - name: Package (ditto keeps the bundle's permissions intact)
         run: |
@@ -80,6 +91,6 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LoopStationGain-AU-x86_64
+          name: LoopStation-AU-x86_64
           path: dist/
           if-no-files-found: error

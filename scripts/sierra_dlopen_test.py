@@ -6,7 +6,7 @@ from __future__ import print_function
 import ctypes, os, sys
 
 PLUGIN = os.path.expanduser(
-    "~/Library/Audio/Plug-Ins/Components/LoopStationGain.component/Contents/MacOS/LoopStationGain")
+    "~/Library/Audio/Plug-Ins/Components/LoopStation.component/Contents/MacOS/LoopStation")
 
 FRAMEWORKS = """Accelerate AppKit ApplicationServices AudioToolbox AudioUnit Cocoa CoreAudio
 CoreAudioKit CoreFoundation CoreGraphics CoreImage CoreMIDI CoreServices CoreText CoreVideo

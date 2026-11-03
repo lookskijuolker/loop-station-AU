@@ -3,18 +3,29 @@
 A loop-station Audio Unit (AUv2) for **Logic Pro X 10.2.3** on an **Intel Mac running
 macOS 10.12.6 Sierra**.
 
-**Current stage: step 1, proof-of-concept.** This is not the looper yet. It is a stereo
-(or mono) pass-through with one gain knob (-60…+12 dB, smoothed). It exists to prove the
-whole path works: building on CI, downloading, installing, auval, and Logic.
+**Current stage: step 2, a single MIDI-controlled loop.**
+- One stereo loop, up to 60 s, with **Rec/Dub**, **Play/Stop** and **Clear**.
+- Control with MIDI notes or CCs from a keyboard, with **MIDI learn**, or with the buttons
+  in the plugin window.
+- **Sync:** free-running, or the loop length rounded to a grid (1/16 note up to 4 bars)
+  at the host tempo.
+- Separate **Loop** and **Input** levels.
 
-**Status:** tested on the target machine (Intel Mac, macOS 10.12.6). The plugin binary
-loads, and `auval -v aufx Lsg1 Lsau` passes.
+Step 1, the gain pass-through proof-of-concept, was tested on the target machine (Intel
+Mac, macOS 10.12.6, Logic Pro X 10.2.3): it loads, passes auval, and works in Logic.
+Step 2 has also been tested there and works as expected:
+- `auval -v aumf Lsl1 Lsau` passes;
+- the plugin loads as an AU MIDI-controlled effect in an instrument slot, and hears
+  audio from the Side Chain menu;
+- MIDI keys and MIDI learn trigger the actions;
+- tempo sync works;
+- settings are saved with the project.
 
-To install it, see **[INSTALL.md](INSTALL.md)**.
+To install and use it, see **[INSTALL.md](INSTALL.md)**.
 
 | | |
 |---|---|
-| Format | AUv2 `.component`, type `aufx`, subtype `Lsg1`, manufacturer `Lsau` |
+| Format | AUv2 `.component`, type `aumf` (MIDI-controlled effect), subtype `Lsl1`, manufacturer `Lsau` |
 | Architecture | x86_64 only |
 | Deployment target | macOS 10.12 |
 | Framework | JUCE **7.0.12** (fetched by CMake) |
@@ -25,18 +36,47 @@ To install it, see **[INSTALL.md](INSTALL.md)**.
 
 ```
 CMakeLists.txt                   deployment target, arch, JUCE fetch, plugin definition
-Source/PluginProcessor.{h,cpp}   audio: pass-through and smoothed gain
-Source/PluginEditor.{h,cpp}      UI: one rotary knob
-scripts/check_macos_compat.sh    static checks on the built binary (arch, min OS, bad symbols)
-.github/workflows/build-au.yml   CI build and artifact upload
+Source/LooperEngine.{h,cpp}      real-time loop engine (plain C++, no JUCE)
+Source/MidiMap.{h,cpp}           MIDI note/CC -> action mapping and MIDI learn (plain C++)
+Source/PluginProcessor.{h,cpp}   JUCE glue: parameters, host tempo, sample-accurate MIDI, state
+Source/PluginEditor.{h,cpp}      UI: state, loop position, action buttons + Learn, levels, sync
+tests/engine_tests.cpp           unit tests for the engine and MIDI map
+scripts/check_macos_compat.sh    static checks on the built binary (arch, min OS, symbols, frameworks)
+scripts/sierra_dlopen_test.py    run on the target Mac to find frameworks that fail to load
+.github/workflows/build-au.yml   CI: unit tests, build, checks, artifact upload
 ```
+
+## How the looper works
+
+- **Real-time safety.**
+  - All loop memory (60 s, stereo) is reserved in `prepareToPlay`. The audio thread never
+    allocates, locks or waits.
+  - Button presses reach the audio thread through an atomic flag.
+  - The UI reads the state through atomics.
+- **Timing.**
+  - MIDI is handled to the exact sample: the block is split at each MIDI event.
+  - Start, stop, overdub and clear use 5 ms fades, and the loop seam gets a 2 ms fade,
+    so nothing clicks.
+- **Sync.** When a recording ends, its length is rounded to the nearest whole number of
+  grid units, computed from the host BPM and time signature.
+  - Rounding up keeps recording until the grid line.
+  - Rounding down cuts the loop and carries on playing at the right offset.
+  - The loop's start isn't yet locked to the host's bar position. That's planned for
+    step 3.
+- **Tests.** `tests/engine_tests.cpp` covers recording, sync rounding up and down, overdub,
+  stop and play, clear, mis-taps, maximum length, the dry path, and MIDI learn. CI runs it
+  with address and undefined-behaviour sanitizers.
 
 ## Building locally (on any Mac with Xcode and CMake)
 
 ```sh
+# unit tests (any OS with a C++17 compiler)
+c++ -std=c++17 -I Source Source/LooperEngine.cpp Source/MidiMap.cpp tests/engine_tests.cpp -o engine_tests && ./engine_tests
+
+# the plugin
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target LoopStationGain_AU
-scripts/check_macos_compat.sh build/LoopStationGain_artefacts/Release/AU/LoopStationGain.component
+cmake --build build --target LoopStation_AU
+scripts/check_macos_compat.sh build/LoopStation_artefacts/Release/AU/LoopStation.component
 ```
 
 To use a local JUCE checkout instead of downloading one, add
@@ -132,15 +172,16 @@ on that machine, and most JUCE AUs do. The rules that follow from this:
 4. **Some problems only show at load time.** A missing libc++ symbol or an unguarded new
    API only appears when Sierra loads the plugin. The symbol denylist catches the known
    cases, but it can't be complete.
-5. **The plugin identity must never change.** `Lsau`/`Lsg1`, the type `aufx` and the
-   bundle ID are how Logic identifies the plugin. Changing any of them makes it a
-   *different* plugin, and saved projects lose it. Bump `VERSION` in `CMakeLists.txt`
-   for each release so Logic rescans.
-6. **The plugin type for the real looper.** `aufx` effects don't receive MIDI in Logic.
-   If the looper needs MIDI or footswitch control, it will probably need to be a
-   *MIDI-controlled effect* (`aumf`, `kAudioUnitType_MusicEffect`). Decide this before
-   anyone uses the looper in real projects, because of risk 5. The real looper will
-   probably get a new plugin code anyway.
+5. **The plugin identity must never change.** `aumf` / `Lsl1` / `Lsau` and the bundle ID
+   `com.loopstation.looper` are how Logic identifies the looper. Changing any of them makes
+   it a *different* plugin, and saved projects lose it. Bump `VERSION` in `CMakeLists.txt`
+   for each release so Logic rescans. (The step-1 gain plugin, `aufx` / `Lsg1`, is a
+   separate plugin.)
+6. **Routing in Logic.** A MIDI-controlled effect goes in a software instrument track's
+   instrument slot, and gets its audio from the Side Chain menu (see INSTALL.md). This
+   works in Logic 10.2.3. The plugin accepts that audio on its main input and on a
+   side-chain input, and adds the two together. Keep it that way, because we haven't
+   checked which of the two inputs Logic actually uses.
 7. **JUCE 7 gets no more updates.** This is fine for a fixed, old target. We would only
    upgrade if we hit a bug.
 8. **Downloading on Sierra.** Artifacts need a GitHub login and are kept for 90 days.

@@ -7,6 +7,9 @@ macOS 10.12.6 Sierra**.
 (or mono) pass-through with one gain knob (-60…+12 dB, smoothed). It exists to prove the
 whole path works: building on CI, downloading, installing, auval, and Logic.
 
+**Status:** tested on the target machine (Intel Mac, macOS 10.12.6). The plugin binary
+loads, and `auval -v aufx Lsg1 Lsau` passes.
+
 To install it, see **[INSTALL.md](INSTALL.md)**.
 
 | | |

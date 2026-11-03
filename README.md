@@ -81,6 +81,24 @@ that *compiles* with a modern SDK can still fail to *load* on Sierra with a dyld
 references any of the runtime symbols above, if the architecture is not x86_64 only, or
 if the minimum OS recorded in the binary is not 10.12.
 
+## Keep the framework list short
+
+Every system framework the plugin links gets loaded with it, along with everything
+*that* framework depends on. On a real Sierra machine, the first build couldn't load:
+one of its frameworks pulled in Apple's private `MobileDevice.framework`, and that copy
+had been replaced by a newer one that needs a function Sierra doesn't have
+(`_xpc_file_transfer_create_with_fd`). Logic itself was fine, because it never loads
+that chain. The rules that follow from this:
+
+- Link `juce::juce_audio_processors`, not `juce_audio_utils`. `juce_audio_utils` brings
+  in `DiscRecording` and other modules we don't need.
+- Keep `-Wl,-dead_strip_dylibs` on the AU target, so frameworks with no used symbols are
+  dropped. WebKit is one: `juce_gui_extra` always links it.
+- `check_macos_compat.sh` fails the build if WebKit, DiscRecording, MobileDevice or
+  UniformTypeIdentifiers is linked.
+- Use `scripts/sierra_dlopen_test.py` on the target Mac to find which framework fails
+  to load. It ships in every artifact.
+
 ## Risks and how they're handled
 
 1. **No GitHub runner has an Xcode that officially supports 10.12.** Xcode 14 and later

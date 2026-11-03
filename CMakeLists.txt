@@ -61,12 +61,18 @@ target_compile_definitions(LoopStationGain PUBLIC
 
 target_link_libraries(LoopStationGain
     PRIVATE
-        juce::juce_audio_utils
+        juce::juce_audio_processors   # not juce_audio_utils: that one drags in DiscRecording
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
 if(APPLE)
+    # Drop every framework the binary doesn't actually use (e.g. WebKit, which
+    # juce_gui_extra always links even with JUCE_WEB_BROWSER=0). Each system framework
+    # we load is one more thing that can be broken on an old/mismatched macOS install;
+    # see README.md, "Keep the framework list short".
+    target_link_options(LoopStationGain_AU PRIVATE -Wl,-dead_strip_dylibs)
+
     # Warn whenever an API newer than the deployment target is used without an
     # @available / __builtin_available guard.
     target_compile_options(LoopStationGain PRIVATE -Wunguarded-availability)

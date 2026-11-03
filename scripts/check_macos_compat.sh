@@ -33,7 +33,16 @@ if [[ "$MINOS" != "$WANT_MIN" ]]; then
 fi
 
 echo "== Linked libraries / frameworks"
-otool -L "$BIN"
+LIBS="$(otool -L "$BIN" | tail -n +2)"
+echo "$LIBS"
+# Frameworks a plugin has no business loading. On a real Sierra machine, a linked
+# framework pulled in a mismatched private MobileDevice.framework and broke dlopen.
+FORBIDDEN_FW='/(WebKit|DiscRecording|MobileDevice|UniformTypeIdentifiers)\.framework/'
+if echo "$LIBS" | grep -Eq "$FORBIDDEN_FW"; then
+  echo "ERROR: forbidden framework linked:"
+  echo "$LIBS" | grep -E "$FORBIDDEN_FW"
+  fail=1
+fi
 
 echo "== Undefined C++ runtime symbols that do not exist in Sierra's libc++"
 # Each of these lives in the libc++/libc++abi dylib only on newer macOS releases.

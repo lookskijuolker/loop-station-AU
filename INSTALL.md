@@ -93,6 +93,18 @@ auval -v aufx Lsg1 Lsau > ~/Desktop/auval.txt 2>&1
    **Audio Units ▸ LoopStation ▸ LoopStation Gain**. At 0 dB the sound should be
    unchanged. Turning the knob down should make it quieter.
 
+## If auval says "couldn't be opened" (`OpenAComponent: result: -1`)
+
+That means macOS couldn't load the plugin binary. To see the real reason, run the
+`sierra_dlopen_test.py` script from the artifact zip:
+
+```sh
+python ~/Downloads/sierra_dlopen_test.py
+```
+
+It tries to load each system framework the plugin uses, then the plugin itself, and
+prints the exact error for anything that fails. Send me the whole output.
+
 ## Updating to a newer build
 
 1. Quit Logic.

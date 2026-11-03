@@ -84,20 +84,23 @@ if the minimum OS recorded in the binary is not 10.12.
 ## Keep the framework list short
 
 Every system framework the plugin links gets loaded with it, along with everything
-*that* framework depends on. On a real Sierra machine, the first build couldn't load:
-one of its frameworks pulled in Apple's private `MobileDevice.framework`, and that copy
-had been replaced by a newer one that needs a function Sierra doesn't have
-(`_xpc_file_transfer_create_with_fd`). Logic itself was fine, because it never loads
-that chain. The rules that follow from this:
+*that* framework depends on. On the target Sierra Mac, **CoreAudioKit can't load**: it
+pulls in Apple's private `MobileDevice.framework`, and that copy has been replaced by a
+newer one that needs a function Sierra doesn't have (`_xpc_file_transfer_create_with_fd`).
+`scripts/sierra_dlopen_test.py` showed this. Any AU that links CoreAudioKit fails to open
+on that machine, and most JUCE AUs do. The rules that follow from this:
 
+- **Never link CoreAudioKit.** The AUv2 wrapper only needs it when hosting other AUs
+  (`JUCE_PLUGINHOST_AU`, which is off). `CMakeLists.txt` removes it from
+  `juce_audio_plugin_client_AU`'s link list. This rules out hosting AUs inside the looper,
+  and Apple's generic AU view, unless the system is repaired.
+- WebKit is removed from `juce_gui_extra`'s link list. That module always links it, even
+  with the web browser turned off, and `-dead_strip_dylibs` doesn't drop it.
 - Link `juce::juce_audio_processors`, not `juce_audio_utils`. `juce_audio_utils` brings
   in `DiscRecording` and other modules we don't need.
-- WebKit is removed from `juce_gui_extra`'s link list in `CMakeLists.txt`. That module
-  always links it, even with the web browser turned off, and `-dead_strip_dylibs` doesn't
-  drop it. Keep `-Wl,-dead_strip_dylibs` on the AU target anyway, for anything else
-  that's unused.
-- `check_macos_compat.sh` fails the build if WebKit, DiscRecording, MobileDevice or
-  UniformTypeIdentifiers is linked.
+- Keep `-Wl,-dead_strip_dylibs` on the AU target, for anything else that's unused.
+- `check_macos_compat.sh` fails the build if CoreAudioKit, WebKit, DiscRecording,
+  MobileDevice or UniformTypeIdentifiers is linked.
 - Use `scripts/sierra_dlopen_test.py` on the target Mac to find which framework fails
   to load. It ships in every artifact.
 

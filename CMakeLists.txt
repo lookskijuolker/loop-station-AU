@@ -32,16 +32,27 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW    TRUE)
 FetchContent_MakeAvailable(JUCE)
 
-# juce_gui_extra always links WebKit, even with JUCE_WEB_BROWSER=0, and
-# -dead_strip_dylibs doesn't remove it. We never use it, and every extra system
-# framework is a load-time risk on the Sierra machine (see README.md), so remove it
-# from the module's link interface. If anything did need WebKit, linking would fail
-# loudly with undefined symbols.
-get_target_property(_juce_gui_extra_libs juce_gui_extra INTERFACE_LINK_LIBRARIES)
-if(_juce_gui_extra_libs)
-    list(FILTER _juce_gui_extra_libs EXCLUDE REGEX "WebKit")
-    set_target_properties(juce_gui_extra PROPERTIES INTERFACE_LINK_LIBRARIES "${_juce_gui_extra_libs}")
-endif()
+# Remove system frameworks that JUCE links but this plugin never uses. Every
+# framework we link is loaded together with the plugin, along with everything it
+# depends on. On the target Sierra Mac, CoreAudioKit itself can't load: it pulls in a
+# mismatched private MobileDevice.framework (see README.md). If any code did need a
+# removed framework, linking would fail loudly with undefined symbols.
+function(loopstation_unlink_framework target framework)
+    if(NOT TARGET ${target})
+        message(FATAL_ERROR "Expected JUCE target '${target}' to exist")
+    endif()
+    get_target_property(_libs ${target} INTERFACE_LINK_LIBRARIES)
+    if(_libs)
+        list(FILTER _libs EXCLUDE REGEX "(^|/|[ ])${framework}(\\.framework)?$")
+        set_target_properties(${target} PROPERTIES INTERFACE_LINK_LIBRARIES "${_libs}")
+    endif()
+endfunction()
+
+# WebKit: always linked by juce_gui_extra, even with JUCE_WEB_BROWSER=0.
+loopstation_unlink_framework(juce_gui_extra WebKit)
+# CoreAudioKit: the AUv2 wrapper only needs it when hosting other AUs
+# (JUCE_PLUGINHOST_AU), which this plugin doesn't do.
+loopstation_unlink_framework(juce_audio_plugin_client_AU CoreAudioKit)
 
 juce_add_plugin(LoopStationGain
     COMPANY_NAME              "LoopStation"

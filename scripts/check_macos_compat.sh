@@ -36,8 +36,8 @@ echo "== Linked libraries / frameworks"
 LIBS="$(otool -L "$BIN" | tail -n +2)"
 echo "$LIBS"
 # Frameworks a plugin has no business loading. On a real Sierra machine, a linked
-# framework pulled in a mismatched private MobileDevice.framework and broke dlopen.
-FORBIDDEN_FW='/(WebKit|DiscRecording|MobileDevice|UniformTypeIdentifiers)\.framework/'
+# framework (CoreAudioKit) pulled in a mismatched private MobileDevice.framework and broke dlopen.
+FORBIDDEN_FW='/(CoreAudioKit|WebKit|DiscRecording|MobileDevice|UniformTypeIdentifiers)\.framework/'
 if echo "$LIBS" | grep -Eq "$FORBIDDEN_FW"; then
   echo "ERROR: forbidden framework linked:"
   echo "$LIBS" | grep -E "$FORBIDDEN_FW"

@@ -78,7 +78,7 @@ This setup has been tested in Logic Pro X 10.2.3 on macOS 10.12.6.
 | Action | Default key | What it does |
 |---|---|---|
 | **Rec / Dub** | **C1** (note 36) | Empty: start recording. Recording: finish and play. Playing: start overdub. Overdubbing: back to playing. Stopped: play from the start and overdub. |
-| **Play / Stop** | **D1** (note 38) | Playing: stop (fades out, rewinds to the start). Stopped: play from the start. Recording: finish and stay stopped. |
+| **Play / Stop** | **D1** (note 38) | **Play comes first.** Recording: finish and play. Overdubbing: switch to playing straight away. Playing: stop (fades out). Stopped: play. |
 | **Clear** | **E1** (note 40) | Fades out and deletes the loop. |
 
 Notes and CCs work on any MIDI channel. Key names follow Logic, where note 60 is C3.
@@ -92,25 +92,27 @@ only be assigned to one action at a time. Assignments are saved with the Logic p
 - **Free:** the loop is exactly as long as you recorded, and starts the moment you
   press Rec.
 - **Host tempo** (the default) uses Logic's tempo, time signature and **Grid** setting
-  (1/16 note up to 4 bars). What it does depends on whether Logic is playing.
-  - **Logic playing:** the loop is *bar-locked*.
-    - **Start:** pressing Rec shows **Waiting for grid**, and recording starts exactly
-      on the next grid line. If you press slightly *late*, up to a quarter of a grid
-      unit and at most 250 ms after a line, recording starts at that line, and the
-      audio you played between the line and your press is kept. Pressing Rec again
-      while waiting cancels.
-    - **End:** the end snaps to the nearest grid line. A little early, and it keeps
-      recording to the line (**Recording (to grid)**). A little late, and it cuts at
-      the line and carries on in time.
-    - **Playback follows Logic's position**, even when you move the playhead, use cycle
-      mode, or stop and restart the loop. The state shows **(bar-locked)**.
-    - If Logic stops, the loop keeps playing on its own. When Logic starts again, the
-      loop jumps back into step with Logic's bars.
-  - **Logic stopped:** recording starts the moment you press Rec, and only the
-    *length* snaps to the grid. That loop isn't bar-locked, so it stays free when Logic
-    starts.
+  (1/16 note up to 4 bars), **but only while Logic is playing**. While Logic is stopped,
+  everything works exactly like **Free**.
 
-  To get a loop that sits on Logic's bars, start Logic playing first, then press Rec.
+  With Logic playing, loops are *bar-locked*:
+  - **Start:** pressing Rec shows **Waiting for grid**, and recording starts exactly on
+    the next grid line. If you press slightly *late*, up to a quarter of a grid unit and
+    at most 250 ms after a line, recording starts at that line, and the audio you
+    played between the line and your press is kept. Pressing Rec again while waiting
+    cancels.
+  - **End:** the end snaps to the nearest grid line. A little early, and it keeps
+    recording to the line (**Recording (to grid)**). A little late, and it cuts at the
+    line and carries on in time.
+  - **Playback follows Logic's position**, even when you move the playhead, use cycle
+    mode, or stop and restart the loop. The state shows **(bar-locked)**.
+  - **When Logic stops, LoopStation stops too:**
+    - a playing or overdubbing loop stops;
+    - a recording is cut at the last grid line it passed and kept, stopped (if it was
+      shorter than one grid unit, it's dropped);
+    - **Waiting for grid** is cancelled.
+
+    When Logic plays again, press **Play** and the loop comes back in step with the bars.
 
   Limits:
   - **Tempo changes:** a bar-locked loop only follows Logic while the tempo is the same
@@ -118,6 +120,16 @@ only be assigned to one action at a time. Assignments are saved with the Logic p
     time-stretching.
   - **2 and 4 bar grids** count bars from the start of the project. Use a constant time
     signature with them.
+
+**Length** (Host tempo, Logic playing): **Off**, or 1, 2, 3, 4, 6, 8, 12 or 16 bars.
+- With a length set, recording starts on the grid as above, and stops by itself after
+  exactly that many bars. It then **switches straight to overdub**. The state shows
+  **Recording (fixed length)**, and the bar fills up as it records.
+- To have it switch to **playing** at the end instead, press **Rec** or **Play/Stop**
+  during the recording. The length stays the same either way.
+- If the length wouldn't fit in 60 seconds at the current tempo, it's reduced to the
+  most whole bars that fit.
+- With Logic stopped, or Sync set to Free, Length is ignored.
 
 **Levels:**
 - **Loop:** the playback level of the loop.

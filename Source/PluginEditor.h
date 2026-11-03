@@ -28,11 +28,11 @@ private:
     ActionRow rows[loopstation::numLoopActions];
 
     juce::Slider loopLevel, dryLevel;
-    juce::Label loopLevelLabel, dryLevelLabel, syncLabel, gridLabel;
-    juce::ComboBox syncBox, gridBox;
+    juce::Label loopLevelLabel, dryLevelLabel, syncLabel, gridLabel, lengthLabel;
+    juce::ComboBox syncBox, gridBox, lengthBox;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> loopLevelAttachment, dryLevelAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncAttachment, gridAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> syncAttachment, gridAttachment, lengthAttachment;
 
     juce::Rectangle<int> progressArea;
     float progress = 0.0f;

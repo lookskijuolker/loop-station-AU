@@ -17,12 +17,24 @@ LoopStationProcessor::LoopStationProcessor()
     dryLevelDb  = apvts.getRawParameterValue ("dryLevel");
     syncParam   = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("sync"));
     gridParam   = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("grid"));
-    jassert (syncParam != nullptr && gridParam != nullptr);
+    lengthParam = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("length"));
+    jassert (syncParam != nullptr && gridParam != nullptr && lengthParam != nullptr);
 }
 
 juce::StringArray LoopStationProcessor::gridChoices()
 {
     return { "1/16", "1/8", "1/4", "1/2", "1 bar", "2 bars", "4 bars" };
+}
+
+juce::StringArray LoopStationProcessor::lengthChoices()
+{
+    return { "Off", "1 bar", "2 bars", "3 bars", "4 bars", "6 bars", "8 bars", "12 bars", "16 bars" };
+}
+
+namespace
+{
+    // Bars for each lengthChoices() entry (0 = off).
+    constexpr int lengthBars[] = { 0, 1, 2, 3, 4, 6, 8, 12, 16 };
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout LoopStationProcessor::createParameterLayout()
@@ -43,6 +55,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout LoopStationProcessor::create
 
     layout.add (std::make_unique<juce::AudioParameterChoice> (
         juce::ParameterID { "grid", 1 }, "Grid", gridChoices(), 4)); // default: 1 bar
+
+    layout.add (std::make_unique<juce::AudioParameterChoice> (
+        juce::ParameterID { "length", 1 }, "Length", lengthChoices(), 0)); // default: off
 
     return layout;
 }
@@ -94,6 +109,7 @@ LoopStationProcessor::HostClock LoopStationProcessor::readHostClock() const
         return clock; // no tempo from the host: behave as free
 
     clock.bpm = *bpm; // shown in the UI even in Free mode
+    clock.transportPlaying = pos->getIsPlaying();
     if (syncParam->getIndex() != 1)
         return clock;
 
@@ -109,6 +125,7 @@ LoopStationProcessor::HostClock LoopStationProcessor::readHostClock() const
     const int g = juce::jlimit (0, 6, gridParam->getIndex());
 
     clock.sync = true;
+    clock.quartersPerBar = quartersPerBar;
     clock.gridQuarters = (g >= 4) ? gridValues[g] * quartersPerBar : gridValues[g];
     clock.ppqPerSample = *bpm / (60.0 * getSampleRate());
 
@@ -129,15 +146,22 @@ LoopStationProcessor::HostClock LoopStationProcessor::readHostClock() const
 loopstation::SyncContext LoopStationProcessor::syncAt (const HostClock& clock, int sampleInBlock) const noexcept
 {
     loopstation::SyncContext c;
-    if (! clock.sync)
+
+    // Host tempo only applies while the host is playing; otherwise behave as Free.
+    if (! clock.sync || ! clock.playing)
         return c;
 
     const double samplesPerQuarter = 1.0 / clock.ppqPerSample;
     c.samplesPerGrid = clock.gridQuarters * samplesPerQuarter;
     c.bpm = clock.bpm;
 
-    if (! clock.playing)
-        return c;
+    // Fixed length: whole bars, reduced if it wouldn't fit in the loop memory.
+    int bars = lengthBars[juce::jlimit (0, 8, lengthParam->getIndex())];
+    const double barSamples = clock.quartersPerBar * samplesPerQuarter;
+    while (bars > 1 && bars * barSamples > static_cast<double> (engine.getMaxLength()))
+        --bars;
+    if (bars > 0 && bars * barSamples <= static_cast<double> (engine.getMaxLength()))
+        c.fixedLengthSamples = bars * barSamples;
 
     const double ppq = clock.ppq + sampleInBlock * clock.ppqPerSample;
     const double g = clock.gridQuarters;
@@ -174,6 +198,11 @@ void LoopStationProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
     const auto clock = readHostClock();
     hostBpm.store (clock.bpm);
+
+    // Host tempo: when the host stops, loops recorded against its grid stop too.
+    if (transportWasPlaying && ! clock.transportPlaying && clock.sync)
+        engine.hostStopped (clock.gridQuarters / clock.ppqPerSample);
+    transportWasPlaying = clock.transportPlaying;
 
     // A loop recorded against the host grid keeps following the host's position.
     if (clock.playing)

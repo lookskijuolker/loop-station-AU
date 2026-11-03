@@ -68,21 +68,25 @@ LoopStationEditor::LoopStationEditor (LoopStationProcessor& p)
     setUpCaption (dryLevelLabel, "Input");
     setUpCaption (syncLabel, "Sync");
     setUpCaption (gridLabel, "Grid");
-    for (auto* l : { &loopLevelLabel, &dryLevelLabel, &syncLabel, &gridLabel })
+    setUpCaption (lengthLabel, "Length");
+    for (auto* l : { &loopLevelLabel, &dryLevelLabel, &syncLabel, &gridLabel, &lengthLabel })
         addAndMakeVisible (*l);
 
     // ComboBox items must exist before the attachments are created.
     syncBox.addItemList ({ "Free", "Host tempo" }, 1);
     gridBox.addItemList (LoopStationProcessor::gridChoices(), 1);
+    lengthBox.addItemList (LoopStationProcessor::lengthChoices(), 1);
     addAndMakeVisible (syncBox);
     addAndMakeVisible (gridBox);
+    addAndMakeVisible (lengthBox);
 
     loopLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "loopLevel", loopLevel);
     dryLevelAttachment  = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, "dryLevel", dryLevel);
     syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "sync", syncBox);
     gridAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "grid", gridBox);
+    lengthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, "length", lengthBox);
 
-    setSize (560, 300);
+    setSize (560, 330);
     timerCallback();
     startTimerHz (30);
 }
@@ -102,7 +106,8 @@ void LoopStationEditor::timerCallback()
     switch (e.getState())
     {
         case LoopState::Empty:       text = "Empty";       stateColour = juce::Colours::grey; break;
-        case LoopState::Recording:   text = e.isFinishingToGrid() ? "Recording (to grid)" : "Recording";
+        case LoopState::Recording:   text = e.isFixedLength()     ? "Recording (fixed length)"
+                                          : e.isFinishingToGrid() ? "Recording (to grid)" : "Recording";
                                      stateColour = juce::Colours::red; break;
         case LoopState::Playing:     text = "Playing";     stateColour = juce::Colours::limegreen; break;
         case LoopState::Overdubbing: text = "Overdubbing"; stateColour = juce::Colours::orange; break;
@@ -121,8 +126,10 @@ void LoopStationEditor::timerCallback()
 
     if (e.getState() == LoopState::Recording)
     {
-        newProgress = static_cast<float> (e.getRecordedSamples()) / static_cast<float> (juce::jmax<int64_t> (1, e.getMaxLength()));
-        info = juce::String (e.getRecordedSamples() / sr, 1) + " s / " + juce::String (LoopStationProcessor::maxLoopSeconds, 0) + " s max";
+        const auto target = e.isFixedLength() ? e.getTargetLength() : e.getMaxLength();
+        newProgress = static_cast<float> (e.getRecordedSamples()) / static_cast<float> (juce::jmax<int64_t> (1, target));
+        info = juce::String (e.getRecordedSamples() / sr, 1) + " s / " + juce::String (target / sr, e.isFixedLength() ? 1 : 0)
+             + (e.isFixedLength() ? " s" : " s max");
     }
     else if (length > 0)
     {
@@ -209,4 +216,8 @@ void LoopStationEditor::resized()
     auto gr = right.removeFromTop (24);
     gridLabel.setBounds (gr.removeFromLeft (50));
     gridBox.setBounds (gr);
+    right.removeFromTop (6);
+    auto len = right.removeFromTop (24);
+    lengthLabel.setBounds (len.removeFromLeft (50));
+    lengthBox.setBounds (len);
 }

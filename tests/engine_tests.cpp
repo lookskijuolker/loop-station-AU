@@ -26,7 +26,7 @@ static SyncContext gridOnly (double samplesPerGrid)
 
 // Host playing at 150 BPM: at 1 kHz that's 400 samples per quarter note. Grid = 1 quarter.
 // 'ppq' is the host position at the trigger.
-static SyncContext hostAt (double ppq, double bpm = 150.0, double gridQuarters = 1.0)
+static SyncContext hostAt (double ppq, double bpm = 150.0, double gridQuarters = 1.0, double fixedSamples = 0.0)
 {
     const double samplesPerQuarter = sr * 60.0 / bpm;
     SyncContext c;
@@ -38,6 +38,7 @@ static SyncContext hostAt (double ppq, double bpm = 150.0, double gridQuarters =
     c.nextLinePpq = c.lastLinePpq + gridQuarters;
     c.samplesSinceLastLine = (ppq - c.lastLinePpq) * samplesPerQuarter;
     c.samplesToNextLine = (c.nextLinePpq - ppq) * samplesPerQuarter;
+    c.fixedLengthSamples = fixedSamples;
     return c;
 }
 
@@ -316,6 +317,115 @@ static void testUnlockedLoopIgnoresHost()
     CHECK (t.e.getPosition() == before);
 }
 
+static void testPlayStopPlaysFirst()
+{
+    Rig t;
+    t.e.trigger (LoopAction::RecordDub, freeRunning());
+    t.run (300, 0.5f);
+    t.e.trigger (LoopAction::PlayStop, freeRunning());     // recording -> play
+    CHECK (t.e.getState() == LoopState::Playing);
+    CHECK (t.e.getLength() == 300);
+
+    t.e.trigger (LoopAction::RecordDub, freeRunning());    // -> overdub
+    t.run (10, 0.0f);
+    t.e.trigger (LoopAction::PlayStop, freeRunning());     // overdub -> play, instantly
+    CHECK (t.e.getState() == LoopState::Playing);
+    t.e.trigger (LoopAction::PlayStop, freeRunning());     // play -> stop
+    CHECK (t.e.getState() == LoopState::Stopped);
+    t.e.trigger (LoopAction::PlayStop, freeRunning());     // stop -> play
+    CHECK (t.e.getState() == LoopState::Playing);
+}
+
+static void testPlayStopDuringGridRecordingPlaysAtTheLine()
+{
+    Rig t;
+    t.e.trigger (LoopAction::RecordDub, hostAt (4.0));
+    t.run (380, 0.5f);
+    t.e.trigger (LoopAction::PlayStop, hostAt (4.95));     // rounds up to 1 beat
+    CHECK (t.e.getState() == LoopState::Recording);
+    t.run (20, 0.5f);
+    CHECK (t.e.getState() == LoopState::Playing);
+    CHECK (t.e.getLength() == 400);
+}
+
+static void testFixedLengthSwitchesToOverdub()
+{
+    Rig t;
+    // 1 bar of 4/4 at 150 BPM = 1600 samples; Rec pressed half a beat before the bar.
+    t.e.trigger (LoopAction::RecordDub, hostAt (7.5, 150.0, 4.0, 1600.0));
+    CHECK (t.e.getState() == LoopState::Armed);
+    CHECK (t.e.isFixedLength());
+    t.run (200, 0.5f);
+    t.run (1, 0.5f);
+    CHECK (t.e.getState() == LoopState::Recording);
+    CHECK (t.e.getTargetLength() == 1600);
+    t.run (1598, 0.5f);
+    CHECK (t.e.getState() == LoopState::Recording);
+    t.run (1, 0.5f);
+    CHECK (t.e.getState() == LoopState::Overdubbing);
+    CHECK (t.e.getLength() == 1600);
+    CHECK (t.e.isLockedToHost());
+}
+
+static void testFixedLengthLatePressAndPlayAtEnd()
+{
+    Rig t;
+    t.run (100, 0.5f);
+    t.e.trigger (LoopAction::RecordDub, hostAt (8.0 + 30.0 / 400.0, 150.0, 4.0, 1600.0)); // 30 samples late
+    CHECK (t.e.getState() == LoopState::Recording);
+    CHECK (t.e.getRecordedSamples() == 30);
+    t.run (500, 0.5f);
+    t.e.trigger (LoopAction::PlayStop, hostAt (9.3, 150.0, 4.0, 1600.0)); // play instead of overdub at the end
+    CHECK (t.e.getState() == LoopState::Recording);                       // the length stays fixed
+    t.run (1070, 0.5f);
+    CHECK (t.e.getState() == LoopState::Playing);
+    CHECK (t.e.getLength() == 1600);
+}
+
+static void testHostStopStopsLockedLoop()
+{
+    Rig t;
+    recordLockedLoop (t);
+    CHECK (t.e.getState() == LoopState::Playing);
+    t.e.hostStopped (1600);
+    CHECK (t.e.getState() == LoopState::Stopped);
+    t.run (50, 0.0f);
+    CHECK (std::fabs (t.l.back()) < 1e-6f);
+}
+
+static void testHostStopDuringRecordingCutsToGrid()
+{
+    Rig t;
+    t.e.trigger (LoopAction::RecordDub, hostAt (4.0));     // grid = 400 samples
+    t.run (1000, 0.5f);                                    // 2.5 units
+    t.e.hostStopped (400);
+    CHECK (t.e.getState() == LoopState::Stopped);
+    CHECK (t.e.getLength() == 800);
+
+    Rig u;
+    u.e.trigger (LoopAction::RecordDub, hostAt (4.0));
+    u.run (300, 0.5f);                                     // less than one unit
+    u.e.hostStopped (400);
+    CHECK (u.e.getState() == LoopState::Empty);
+
+    Rig w;
+    w.e.trigger (LoopAction::RecordDub, hostAt (2.5));     // waiting for the grid
+    w.e.hostStopped (400);
+    CHECK (w.e.getState() == LoopState::Empty);
+    w.run (500, 0.5f);
+    CHECK (w.e.getState() == LoopState::Empty);
+}
+
+static void testHostStopIgnoresFreeLoop()
+{
+    Rig t;
+    t.e.trigger (LoopAction::RecordDub, freeRunning());
+    t.run (300, 0.5f);
+    t.e.trigger (LoopAction::RecordDub, freeRunning());
+    t.e.hostStopped (400);
+    CHECK (t.e.getState() == LoopState::Playing);
+}
+
 int main()
 {
     testFreeRecordAndPlay();
@@ -335,6 +445,13 @@ int main()
     testFollowHostRelocates();
     testStoppedLockedLoopRestartsInPhase();
     testUnlockedLoopIgnoresHost();
+    testPlayStopPlaysFirst();
+    testPlayStopDuringGridRecordingPlaysAtTheLine();
+    testFixedLengthSwitchesToOverdub();
+    testFixedLengthLatePressAndPlayAtEnd();
+    testHostStopStopsLockedLoop();
+    testHostStopDuringRecordingCutsToGrid();
+    testHostStopIgnoresFreeLoop();
 
     if (failures == 0)
         std::printf ("All engine tests passed\n");

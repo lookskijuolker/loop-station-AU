@@ -56,13 +56,26 @@ void LooperEngine::prepare (double newSampleRate, double maxSeconds)
 void LooperEngine::startRecording() noexcept
 {
     length = position = recorded = targetLength = armCountdown = 0;
+    fixedLength = false;
     clearAfterFade = rewindAfterFade = false;
     playEnv = dubEnv = 0.0f;
     state = LoopState::Recording;
 }
 
+void LooperEngine::applyFixedLength (int64_t samples) noexcept
+{
+    if (samples <= 0)
+        return;
+
+    targetLength = std::min (samples, maxLength);
+    afterTarget = LoopState::Overdubbing; // Rec or Play/Stop during the recording changes this to Playing
+    fixedLength = true;
+}
+
 void LooperEngine::startSyncedRecording (const SyncContext& sync) noexcept
 {
+    const auto fixedSamples = static_cast<int64_t> (std::llround (sync.fixedLengthSamples));
+
     const double lateLimit = std::min (lateFraction * sync.samplesPerGrid,
                                        static_cast<double> (prerollLength - 1));
     lockedBpm = sync.bpm;
@@ -81,6 +94,7 @@ void LooperEngine::startSyncedRecording (const SyncContext& sync) noexcept
                 buffer[ch][static_cast<size_t> (i)] =
                     preroll[ch][static_cast<size_t> ((prerollWrite + prerollLength - late + i) % prerollLength)];
         recorded = late;
+        applyFixedLength (fixedSamples);
         return;
     }
 
@@ -88,8 +102,10 @@ void LooperEngine::startSyncedRecording (const SyncContext& sync) noexcept
     length = position = recorded = targetLength = 0;
     clearAfterFade = rewindAfterFade = false;
     playEnv = dubEnv = 0.0f;
+    fixedLength = false;
     originPpq = sync.nextLinePpq;
     armCountdown = std::max<int64_t> (0, static_cast<int64_t> (std::llround (sync.samplesToNextLine)));
+    armedFixedLength = fixedSamples;
     state = LoopState::Armed;
 }
 
@@ -121,6 +137,55 @@ void LooperEngine::followHost (double ppqAtBlockStart, double bpm) noexcept
     publish();
 }
 
+void LooperEngine::hostStopped (double samplesPerGrid) noexcept
+{
+    if (! locked)
+        return;
+
+    switch (state)
+    {
+        case LoopState::Armed:
+            state = LoopState::Empty;
+            locked = false;
+            break;
+
+        case LoopState::Recording:
+        {
+            int64_t keep = 0;
+            if (samplesPerGrid > 0.0)
+            {
+                const auto units = static_cast<int64_t> (std::floor (static_cast<double> (recorded) / samplesPerGrid + 1e-9));
+                keep = static_cast<int64_t> (std::llround (static_cast<double> (units) * samplesPerGrid));
+            }
+
+            if (keep <= 0)
+            {
+                length = position = recorded = targetLength = 0;
+                fixedLength = false;
+                state = LoopState::Empty;
+                locked = false;
+            }
+            else
+            {
+                finishRecording (std::min (keep, recorded), 0, LoopState::Stopped);
+            }
+            break;
+        }
+
+        case LoopState::Playing:
+        case LoopState::Overdubbing:
+            state = LoopState::Stopped;
+            rewindAfterFade = true;
+            break;
+
+        case LoopState::Empty:
+        case LoopState::Stopped:
+            break;
+    }
+
+    publish();
+}
+
 void LooperEngine::trigger (LoopAction action, const SyncContext& sync) noexcept
 {
     if (maxLength <= 0)
@@ -143,7 +208,7 @@ void LooperEngine::trigger (LoopAction action, const SyncContext& sync) noexcept
                         startRecording();
                     }
                     break;
-                case LoopState::Armed:       state = LoopState::Empty; locked = false; break; // cancel
+                case LoopState::Armed:       state = LoopState::Empty; locked = false; armedFixedLength = 0; break; // cancel
                 case LoopState::Recording:   requestFinish (LoopState::Playing, samplesPerGrid); break;
                 case LoopState::Playing:     state = LoopState::Overdubbing; break;
                 case LoopState::Overdubbing: state = LoopState::Playing; break;
@@ -162,9 +227,9 @@ void LooperEngine::trigger (LoopAction action, const SyncContext& sync) noexcept
             {
                 case LoopState::Empty:
                 case LoopState::Armed:       break;
-                case LoopState::Recording:   requestFinish (LoopState::Stopped, samplesPerGrid); break;
-                case LoopState::Playing:
-                case LoopState::Overdubbing: state = LoopState::Stopped; rewindAfterFade = true; break;
+                case LoopState::Recording:   requestFinish (LoopState::Playing, samplesPerGrid); break; // play first
+                case LoopState::Overdubbing: state = LoopState::Playing; break;                          // instantly
+                case LoopState::Playing:     state = LoopState::Stopped; rewindAfterFade = true; break;
                 case LoopState::Stopped:
                     if (hostLocked)           position = hostPhase (sync.ppq, sync.bpm); // in phase
                     else if (playEnv <= 0.0f) position = 0;  // fully stopped: from the top
@@ -177,7 +242,8 @@ void LooperEngine::trigger (LoopAction action, const SyncContext& sync) noexcept
         case LoopAction::Clear:
             if (state == LoopState::Recording || state == LoopState::Armed)
             {
-                length = position = recorded = targetLength = armCountdown = 0;
+                length = position = recorded = targetLength = armCountdown = armedFixedLength = 0;
+                fixedLength = false;
                 state = LoopState::Empty;
                 locked = false;
             }
@@ -233,6 +299,7 @@ void LooperEngine::requestFinish (LoopState next, double samplesPerGrid) noexcep
 void LooperEngine::finishRecording (int64_t newLength, int64_t startPosition, LoopState next) noexcept
 {
     targetLength = 0;
+    fixedLength = false;
 
     if (newLength < static_cast<int64_t> (minLoopSeconds * sampleRate))
     {
@@ -286,7 +353,12 @@ void LooperEngine::process (float* const* channels, int numChannels, int startSa
         if (state == LoopState::Armed)
         {
             if (armCountdown <= 0)
+            {
+                const auto fixedSamples = armedFixedLength;
                 startRecording(); // this sample is on the grid line
+                applyFixedLength (fixedSamples);
+                armedFixedLength = 0;
+            }
             else
                 --armCountdown;
         }
@@ -356,6 +428,8 @@ void LooperEngine::publish() noexcept
     uiRecorded.store (recorded, std::memory_order_relaxed);
     uiFinishing.store (targetLength > 0, std::memory_order_relaxed);
     uiLocked.store (locked, std::memory_order_relaxed);
+    uiFixed.store (fixedLength || (state == LoopState::Armed && armedFixedLength > 0), std::memory_order_relaxed);
+    uiTarget.store (state == LoopState::Armed ? armedFixedLength : targetLength, std::memory_order_relaxed);
 }
 
 } // namespace loopstation

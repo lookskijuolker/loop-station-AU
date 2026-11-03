@@ -40,6 +40,7 @@ public:
     void requestAction (loopstation::LoopAction a) noexcept;
 
     static juce::StringArray gridChoices();
+    static juce::StringArray lengthChoices();
     double getHostBpm() const noexcept { return hostBpm.load(); }
 
     static constexpr double maxLoopSeconds = 60.0;
@@ -56,11 +57,13 @@ private:
     {
         bool sync = false;          // Sync = Host tempo and the host reports a tempo
         bool playing = false;       // ... and its transport is running with a valid position
+        bool transportPlaying = false; // the host transport is running (any Sync setting)
         double bpm = 0.0;
         double ppq = 0.0;           // position at the block's first sample, in quarter notes
         double ppqPerSample = 0.0;
         double gridQuarters = 0.0;
         double anchorPpq = 0.0;     // grid lines are anchorPpq + k * gridQuarters
+        double quartersPerBar = 4.0;
     };
 
     HostClock readHostClock() const;
@@ -70,6 +73,8 @@ private:
     std::atomic<float>* dryLevelDb  = nullptr;
     juce::AudioParameterChoice* syncParam = nullptr;
     juce::AudioParameterChoice* gridParam = nullptr;
+    juce::AudioParameterChoice* lengthParam = nullptr;
+    bool transportWasPlaying = false; // audio thread only
 
     std::atomic<uint32_t> pendingUiActions { 0 };
     std::atomic<double> hostBpm { 0.0 };

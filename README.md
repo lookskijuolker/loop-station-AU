@@ -3,14 +3,22 @@
 A loop-station Audio Unit (AUv2) for **Logic Pro X 10.2.3** on an **Intel Mac running
 macOS 10.12.6 Sierra**.
 
-**Current stage: step 3, bar-locked sync.** This builds on step 2, a single MIDI-controlled loop.
+**Current stage: step 3, bar-locked sync,** with a fixed loop length in bars. This builds
+on step 2, a single MIDI-controlled loop.
 - One stereo loop, up to 60 s, with **Rec/Dub**, **Play/Stop** and **Clear**.
 - Control with MIDI notes or CCs from a keyboard, with **MIDI learn**, or with the buttons
   in the plugin window.
 - **Sync:** free-running, or locked to the host's grid (1/16 note up to 4 bars).
-  - With Logic playing, recording starts and ends on grid lines, and playback follows
-    Logic's position (step 3).
-  - With Logic stopped, only the length is rounded to the grid.
+  - Host tempo applies only while Logic is playing: recording starts and ends on grid
+    lines, playback follows Logic's position, and stopping Logic stops the loop.
+  - While Logic is stopped, it behaves as Free.
+  - An optional **Length** (1–16 bars) records exactly that many bars, then switches
+    to overdub.
+- **Play/Stop always plays first:**
+  - recording → play;
+  - overdub → play, instantly;
+  - play → stop;
+  - stop → play.
 - Separate **Loop** and **Input** levels.
 
 Step 1, the gain pass-through proof-of-concept, was tested on the target machine (Intel
@@ -23,7 +31,12 @@ Step 2 has also been tested there and works as expected:
 - tempo sync works;
 - settings are saved with the project.
 
-Step 3 (the bar lock) hasn't been tested on the target machine yet.
+Step 3 (the bar lock) has been tested there too and works. The four changes since then
+haven't been tested on the target machine yet:
+- Host tempo only applies while Logic is playing;
+- stopping Logic stops the loop;
+- fixed length;
+- Play/Stop always plays first.
 
 To install and use it, see **[INSTALL.md](INSTALL.md)**.
 
@@ -61,10 +74,8 @@ scripts/sierra_dlopen_test.py    run on the target Mac to find frameworks that f
   - MIDI is handled to the exact sample: the block is split at each MIDI event.
   - Start, stop, overdub and clear use 5 ms fades, and the loop seam gets a 2 ms fade,
     so nothing clicks.
-- **Sync, Logic stopped.** When a recording ends, its length is rounded to the nearest
-  whole number of grid units, computed from the host BPM and time signature. Rounding
-  up keeps recording until the grid line. Rounding down cuts the loop and carries on
-  playing at the right offset.
+- **Sync, Logic stopped.** The processor sends the engine a free-running context, so
+  Host tempo behaves exactly like Free.
 - **Sync, Logic playing (bar lock, step 3).**
   - **Start.** The processor works out where the grid lines are from Logic's position
     (ppq), time signature and last bar line, for each MIDI event at its exact sample.
@@ -78,6 +89,14 @@ scripts/sierra_dlopen_test.py    run on the target Mac to find frameworks that f
     stopping and restarting the loop.
   - **Different tempo.** If Logic's tempo differs from the recording tempo, the loop
     isn't moved. It plays free.
+  - **Logic stops.** When the transport goes from playing to stopped, the processor calls
+    `hostStopped()`. Locked loops stop. A recording is cut at the last full grid unit, or
+    dropped if it's shorter than one. An armed recording is cancelled. Free loops aren't
+    affected.
+  - **Fixed length.** `SyncContext::fixedLengthSamples` is whole bars at the host tempo,
+    reduced to fit in 60 s. It sets the recording's target length when recording starts
+    (immediately, or once the armed countdown ends). At the target, the loop goes to
+    Overdubbing, or to Playing if Rec or Play/Stop was pressed during the recording.
 - **Tests.** `tests/engine_tests.cpp` covers:
   - recording, and sync rounding up and down;
   - overdub, stop and play, clear;
@@ -85,7 +104,11 @@ scripts/sierra_dlopen_test.py    run on the target Mac to find frameworks that f
   - the bar lock: waiting for the next line, late presses filled from the pre-roll,
     cancelling while waiting, following relocations, wrapping before the start
     position, ignoring a different tempo, restarting in phase, and loops recorded
-    with Logic stopped staying unlocked. CI runs it
+    with Logic stopped staying unlocked;
+  - Play/Stop always playing first (including while recording to the grid);
+  - fixed length switching to overdub, with a late press, or to play when chosen;
+  - Logic stopping: locked loops stop, recordings are cut to the grid or dropped,
+    armed recordings are cancelled, and free loops carry on. CI runs it
   with address and undefined-behaviour sanitizers.
 
 ## Building locally (on any Mac with Xcode and CMake)

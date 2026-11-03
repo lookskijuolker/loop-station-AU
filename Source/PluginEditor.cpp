@@ -107,7 +107,11 @@ void LoopStationEditor::timerCallback()
         case LoopState::Playing:     text = "Playing";     stateColour = juce::Colours::limegreen; break;
         case LoopState::Overdubbing: text = "Overdubbing"; stateColour = juce::Colours::orange; break;
         case LoopState::Stopped:     text = "Stopped";     stateColour = juce::Colours::lightblue; break;
+        case LoopState::Armed:       text = "Waiting for grid"; stateColour = juce::Colours::indianred; break;
     }
+
+    if (e.isLockedToHost() && e.getLength() > 0)
+        text << "  (bar-locked)";
     stateLabel.setText (text, juce::dontSendNotification);
     stateLabel.setColour (juce::Label::textColourId, stateColour);
 
@@ -159,7 +163,7 @@ void LoopStationEditor::paint (juce::Graphics& g)
 
     g.setColour (juce::Colours::white.withAlpha (0.4f));
     g.setFont (11.0f);
-    g.drawText ("LoopStation step 2  -  MIDI: keys/CCs on any channel. Default C1 / D1 / E1.",
+    g.drawText ("LoopStation  -  MIDI: keys/CCs on any channel. Default C1 / D1 / E1.",
                 getLocalBounds().removeFromBottom (18).reduced (10, 0), juce::Justification::centredLeft);
 }
 
@@ -169,7 +173,7 @@ void LoopStationEditor::resized()
     area.removeFromBottom (14);
 
     auto top = area.removeFromTop (32);
-    stateLabel.setBounds (top.removeFromLeft (260));
+    stateLabel.setBounds (top.removeFromLeft (330));
     infoLabel.setBounds (top);
 
     area.removeFromTop (6);

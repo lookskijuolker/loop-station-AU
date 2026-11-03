@@ -14,10 +14,22 @@
 namespace loopstation
 {
 
-enum class LoopState : int { Empty = 0, Recording, Playing, Overdubbing, Stopped };
+enum class LoopState : int { Empty = 0, Recording, Playing, Overdubbing, Stopped, Armed };
 
 enum class LoopAction : int { RecordDub = 0, PlayStop, Clear };
 constexpr int numLoopActions = 3;
+
+// Timing information for one trigger, at the sample the trigger happens.
+struct SyncContext
+{
+    double samplesPerGrid = 0.0;      // > 0: sync mode, loop lengths are whole grid units
+    bool   hostPlaying = false;       // host transport running: the fields below are valid
+    double ppq = 0.0;                 // host position at the trigger, in quarter notes
+    double bpm = 0.0;
+    double samplesSinceLastLine = 0.0;
+    double samplesToNextLine = 0.0;
+    double lastLinePpq = 0.0, nextLinePpq = 0.0;
+};
 
 class LooperEngine
 {
@@ -27,9 +39,15 @@ public:
     // Allocates the loop memory. Keeps the current loop if nothing changed.
     void prepare (double sampleRate, double maxSeconds);
 
-    // samplesPerGrid > 0: sync mode, the loop length is rounded to a whole number of
-    // grid units when recording ends. samplesPerGrid <= 0: free-running.
-    void trigger (LoopAction action, double samplesPerGrid) noexcept;
+    // Free-running: default SyncContext. Sync with the host stopped: only samplesPerGrid
+    // is set, and the loop length is rounded to whole grid units. Sync with the host
+    // playing: recording starts on a grid line too, and the loop locks to the host.
+    void trigger (LoopAction action, const SyncContext& sync) noexcept;
+
+    // Call at the start of each block while the host transport is playing. A loop
+    // recorded against the host's grid jumps to the host's phase if it has drifted or
+    // the host relocated. Nothing happens if the tempo differs from the recording tempo.
+    void followHost (double ppqAtBlockStart, double bpm) noexcept;
 
     // Processes audio in place: channels[ch][startSample .. startSample + numSamples).
     // Output = input * dryGain + loop * loopGain. Gains are smoothed internally.
@@ -43,15 +61,20 @@ public:
     bool      isFinishingToGrid() const noexcept { return uiFinishing.load (std::memory_order_relaxed); }
     int64_t   getMaxLength() const noexcept    { return maxLength; }
     double    getSampleRate() const noexcept   { return sampleRate; }
+    bool      isLockedToHost() const noexcept  { return uiLocked.load (std::memory_order_relaxed); }
 
 private:
     void startRecording() noexcept;
+    void startSyncedRecording (const SyncContext& sync) noexcept;
+    int64_t hostPhase (double ppq, double bpm) const noexcept;
     void requestFinish (LoopState next, double samplesPerGrid) noexcept;
     void finishRecording (int64_t newLength, int64_t startPosition, LoopState next) noexcept;
     void applySeamFades() noexcept;
     void publish() noexcept;
 
     std::vector<float> buffer[maxChannels];
+    std::vector<float> preroll[maxChannels];   // the last ~250 ms of input, always recorded
+    int64_t prerollLength = 0, prerollWrite = 0;
     double  sampleRate = 0.0;
     int64_t maxLength = 0;
 
@@ -61,6 +84,10 @@ private:
     int64_t recorded = 0;        // samples recorded so far (while Recording)
     int64_t targetLength = 0;    // > 0 while recording on to reach the next grid line
     LoopState afterTarget = LoopState::Playing;
+    int64_t armCountdown = 0;    // samples until recording starts (Armed)
+    bool locked = false;         // recorded against the host grid: follows the host
+    double originPpq = 0.0;      // host position of the loop's first sample
+    double lockedBpm = 0.0;
     bool clearAfterFade = false;
     bool rewindAfterFade = false;
 
@@ -69,7 +96,7 @@ private:
 
     std::atomic<LoopState> uiState { LoopState::Empty };
     std::atomic<int64_t> uiLength { 0 }, uiPosition { 0 }, uiRecorded { 0 };
-    std::atomic<bool> uiFinishing { false };
+    std::atomic<bool> uiFinishing { false }, uiLocked { false };
 };
 
 } // namespace loopstation

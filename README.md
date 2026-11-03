@@ -3,12 +3,14 @@
 A loop-station Audio Unit (AUv2) for **Logic Pro X 10.2.3** on an **Intel Mac running
 macOS 10.12.6 Sierra**.
 
-**Current stage: step 2, a single MIDI-controlled loop.**
+**Current stage: step 3, bar-locked sync.** This builds on step 2, a single MIDI-controlled loop.
 - One stereo loop, up to 60 s, with **Rec/Dub**, **Play/Stop** and **Clear**.
 - Control with MIDI notes or CCs from a keyboard, with **MIDI learn**, or with the buttons
   in the plugin window.
-- **Sync:** free-running, or the loop length rounded to a grid (1/16 note up to 4 bars)
-  at the host tempo.
+- **Sync:** free-running, or locked to the host's grid (1/16 note up to 4 bars).
+  - With Logic playing, recording starts and ends on grid lines, and playback follows
+    Logic's position (step 3).
+  - With Logic stopped, only the length is rounded to the grid.
 - Separate **Loop** and **Input** levels.
 
 Step 1, the gain pass-through proof-of-concept, was tested on the target machine (Intel
@@ -20,6 +22,8 @@ Step 2 has also been tested there and works as expected:
 - MIDI keys and MIDI learn trigger the actions;
 - tempo sync works;
 - settings are saved with the project.
+
+Step 3 (the bar lock) hasn't been tested on the target machine yet.
 
 To install and use it, see **[INSTALL.md](INSTALL.md)**.
 
@@ -57,14 +61,31 @@ scripts/sierra_dlopen_test.py    run on the target Mac to find frameworks that f
   - MIDI is handled to the exact sample: the block is split at each MIDI event.
   - Start, stop, overdub and clear use 5 ms fades, and the loop seam gets a 2 ms fade,
     so nothing clicks.
-- **Sync.** When a recording ends, its length is rounded to the nearest whole number of
-  grid units, computed from the host BPM and time signature.
-  - Rounding up keeps recording until the grid line.
-  - Rounding down cuts the loop and carries on playing at the right offset.
-  - The loop's start isn't yet locked to the host's bar position. That's planned for
-    step 3.
-- **Tests.** `tests/engine_tests.cpp` covers recording, sync rounding up and down, overdub,
-  stop and play, clear, mis-taps, maximum length, the dry path, and MIDI learn. CI runs it
+- **Sync, Logic stopped.** When a recording ends, its length is rounded to the nearest
+  whole number of grid units, computed from the host BPM and time signature. Rounding
+  up keeps recording until the grid line. Rounding down cuts the loop and carries on
+  playing at the right offset.
+- **Sync, Logic playing (bar lock, step 3).**
+  - **Start.** The processor works out where the grid lines are from Logic's position
+    (ppq), time signature and last bar line, for each MIDI event at its exact sample.
+    - Pressed early, Rec waits for the next line (state **Armed**).
+    - Pressed up to `min(¼ grid unit, 250 ms)` *late*, recording starts at the line
+      just passed. The missed audio is copied from a pre-roll buffer that always holds
+      the last 250 ms of input.
+  - **Lock.** The loop stores the position where it starts and the tempo it was recorded
+    at. At the start of every block, `followHost()` snaps the play position to the
+    host's phase if it's more than 2 ms off. That covers relocations, cycle mode, and
+    stopping and restarting the loop.
+  - **Different tempo.** If Logic's tempo differs from the recording tempo, the loop
+    isn't moved. It plays free.
+- **Tests.** `tests/engine_tests.cpp` covers:
+  - recording, and sync rounding up and down;
+  - overdub, stop and play, clear;
+  - mis-taps, maximum length, the dry path, and MIDI learn;
+  - the bar lock: waiting for the next line, late presses filled from the pre-roll,
+    cancelling while waiting, following relocations, wrapping before the start
+    position, ignoring a different tempo, restarting in phase, and loops recorded
+    with Logic stopped staying unlocked. CI runs it
   with address and undefined-behaviour sanitizers.
 
 ## Building locally (on any Mac with Xcode and CMake)

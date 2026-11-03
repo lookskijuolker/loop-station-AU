@@ -89,18 +89,35 @@ so sustain pedals and most buttons work. Click **Learn** again to cancel. A key 
 only be assigned to one action at a time. Assignments are saved with the Logic project.
 
 **Sync:**
-- **Free:** the loop is exactly as long as you recorded.
-- **Host tempo** (the default): when you finish recording, the length is rounded to the
-  nearest multiple of the **Grid** value (1/16 note up to 4 bars), using Logic's project
-  tempo and time signature.
-  - If you stopped a little *early*, the plugin keeps recording up to the next grid line.
-    The state then shows **Recording (to grid)**.
-  - If you stopped a little *late*, the loop is cut at the grid line, and playback carries
-    on in time.
-  - This works whether Logic's transport is playing or not.
+- **Free:** the loop is exactly as long as you recorded, and starts the moment you
+  press Rec.
+- **Host tempo** (the default) uses Logic's tempo, time signature and **Grid** setting
+  (1/16 note up to 4 bars). What it does depends on whether Logic is playing.
+  - **Logic playing:** the loop is *bar-locked*.
+    - **Start:** pressing Rec shows **Waiting for grid**, and recording starts exactly
+      on the next grid line. If you press slightly *late*, up to a quarter of a grid
+      unit and at most 250 ms after a line, recording starts at that line, and the
+      audio you played between the line and your press is kept. Pressing Rec again
+      while waiting cancels.
+    - **End:** the end snaps to the nearest grid line. A little early, and it keeps
+      recording to the line (**Recording (to grid)**). A little late, and it cuts at
+      the line and carries on in time.
+    - **Playback follows Logic's position**, even when you move the playhead, use cycle
+      mode, or stop and restart the loop. The state shows **(bar-locked)**.
+    - If Logic stops, the loop keeps playing on its own. When Logic starts again, the
+      loop jumps back into step with Logic's bars.
+  - **Logic stopped:** recording starts the moment you press Rec, and only the
+    *length* snaps to the grid. That loop isn't bar-locked, so it stays free when Logic
+    starts.
 
-  The loop doesn't yet start on Logic's bar lines, so it will drift against Logic's
-  grid. Locking the loop to the bar lines is planned for step 3.
+  To get a loop that sits on Logic's bars, start Logic playing first, then press Rec.
+
+  Limits:
+  - **Tempo changes:** a bar-locked loop only follows Logic while the tempo is the same
+    as when it was recorded. If you change the tempo, it plays free, because there's no
+    time-stretching.
+  - **2 and 4 bar grids** count bars from the start of the project. Use a constant time
+    signature with them.
 
 **Levels:**
 - **Loop:** the playback level of the loop.

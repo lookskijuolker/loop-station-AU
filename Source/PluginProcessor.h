@@ -50,7 +50,21 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    double samplesPerGrid (const juce::AudioPlayHead::PositionInfo* pos) const noexcept;
+
+    // Host timing for the current block.
+    struct HostClock
+    {
+        bool sync = false;          // Sync = Host tempo and the host reports a tempo
+        bool playing = false;       // ... and its transport is running with a valid position
+        double bpm = 0.0;
+        double ppq = 0.0;           // position at the block's first sample, in quarter notes
+        double ppqPerSample = 0.0;
+        double gridQuarters = 0.0;
+        double anchorPpq = 0.0;     // grid lines are anchorPpq + k * gridQuarters
+    };
+
+    HostClock readHostClock() const;
+    loopstation::SyncContext syncAt (const HostClock&, int sampleInBlock) const noexcept;
 
     std::atomic<float>* loopLevelDb = nullptr;
     std::atomic<float>* dryLevelDb  = nullptr;

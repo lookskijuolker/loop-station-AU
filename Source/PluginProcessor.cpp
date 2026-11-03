@@ -77,14 +77,25 @@ void LoopStationProcessor::requestAction (LoopAction a) noexcept
     pendingUiActions.fetch_or (1u << static_cast<int> (a));
 }
 
-double LoopStationProcessor::samplesPerGrid (const juce::AudioPlayHead::PositionInfo* pos) const noexcept
+LoopStationProcessor::HostClock LoopStationProcessor::readHostClock() const
 {
-    if (syncParam->getIndex() != 1 || pos == nullptr)
-        return 0.0;
+    HostClock clock;
+
+    auto* host = getPlayHead();
+    if (host == nullptr)
+        return clock;
+
+    const auto pos = host->getPosition();
+    if (! pos.hasValue())
+        return clock;
 
     const auto bpm = pos->getBpm();
     if (! bpm.hasValue() || *bpm <= 0.0)
-        return 0.0; // no tempo from the host: behave as free
+        return clock; // no tempo from the host: behave as free
+
+    clock.bpm = *bpm; // shown in the UI even in Free mode
+    if (syncParam->getIndex() != 1)
+        return clock;
 
     int num = 4, den = 4;
     if (const auto ts = pos->getTimeSignature())
@@ -94,11 +105,51 @@ double LoopStationProcessor::samplesPerGrid (const juce::AudioPlayHead::Position
     }
 
     const double quartersPerBar = num * 4.0 / den;
-    static const double gridQuarters[] = { 0.25, 0.5, 1.0, 2.0, 1.0, 2.0, 4.0 };
+    static const double gridValues[] = { 0.25, 0.5, 1.0, 2.0, 1.0, 2.0, 4.0 }; // quarters, or bars for 4..6
     const int g = juce::jlimit (0, 6, gridParam->getIndex());
-    const double quarters = (g >= 4) ? gridQuarters[g] * quartersPerBar : gridQuarters[g];
 
-    return getSampleRate() * 60.0 / *bpm * quarters;
+    clock.sync = true;
+    clock.gridQuarters = (g >= 4) ? gridValues[g] * quartersPerBar : gridValues[g];
+    clock.ppqPerSample = *bpm / (60.0 * getSampleRate());
+
+    if (const auto ppq = pos->getPpqPosition(); pos->getIsPlaying() && ppq.hasValue())
+    {
+        clock.playing = true;
+        clock.ppq = *ppq;
+
+        // Grids up to one bar are counted from the current bar line, so they stay right
+        // after a time-signature change. 2 and 4 bars are counted from the project start.
+        if (const auto barStart = pos->getPpqPositionOfLastBarStart(); barStart.hasValue() && g <= 4)
+            clock.anchorPpq = *barStart;
+    }
+
+    return clock;
+}
+
+loopstation::SyncContext LoopStationProcessor::syncAt (const HostClock& clock, int sampleInBlock) const noexcept
+{
+    loopstation::SyncContext c;
+    if (! clock.sync)
+        return c;
+
+    const double samplesPerQuarter = 1.0 / clock.ppqPerSample;
+    c.samplesPerGrid = clock.gridQuarters * samplesPerQuarter;
+    c.bpm = clock.bpm;
+
+    if (! clock.playing)
+        return c;
+
+    const double ppq = clock.ppq + sampleInBlock * clock.ppqPerSample;
+    const double g = clock.gridQuarters;
+    const double units = std::floor ((ppq - clock.anchorPpq) / g + 1e-9);
+
+    c.hostPlaying = true;
+    c.ppq = ppq;
+    c.lastLinePpq = clock.anchorPpq + units * g;
+    c.nextLinePpq = c.lastLinePpq + g;
+    c.samplesSinceLastLine = juce::jmax (0.0, (ppq - c.lastLinePpq) * samplesPerQuarter);
+    c.samplesToNextLine = juce::jmax (0.0, (c.nextLinePpq - ppq) * samplesPerQuarter);
+    return c;
 }
 
 void LoopStationProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
@@ -121,23 +172,18 @@ void LoopStationProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
                 mainBus.addFrom (ch, 0, sc, juce::jmin (ch, sc.getNumChannels() - 1), 0, numSamples);
     }
 
-    juce::Optional<juce::AudioPlayHead::PositionInfo> position;
-    if (auto* ph = getPlayHead())
-        position = ph->getPosition();
+    const auto clock = readHostClock();
+    hostBpm.store (clock.bpm);
 
-    double bpm = 0.0;
-    if (position.hasValue())
-        if (const auto b = position->getBpm())
-            bpm = *b;
-    hostBpm.store (bpm);
-
-    const double grid = samplesPerGrid (position.hasValue() ? &*position : nullptr);
+    // A loop recorded against the host grid keeps following the host's position.
+    if (clock.playing)
+        engine.followHost (clock.ppq, clock.bpm);
 
     // Button presses from the plugin window.
     const auto ui = pendingUiActions.exchange (0);
     for (int a = 0; a < numLoopActions; ++a)
         if (ui & (1u << a))
-            engine.trigger (static_cast<LoopAction> (a), grid);
+            engine.trigger (static_cast<LoopAction> (a), syncAt (clock, 0));
 
     const float dry  = juce::Decibels::decibelsToGain (dryLevelDb->load(), -60.0f);
     const float loop = juce::Decibels::decibelsToGain (loopLevelDb->load(), -60.0f);
@@ -159,7 +205,7 @@ void LoopStationProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
         {
             const int action = midiMap.handleMessage (meta.data[0], meta.data[1], meta.data[2]);
             if (action >= 0)
-                engine.trigger (static_cast<LoopAction> (action), grid);
+                engine.trigger (static_cast<LoopAction> (action), syncAt (clock, at));
         }
     }
 

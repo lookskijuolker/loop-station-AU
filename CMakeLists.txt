@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.22)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12" CACHE STRING "Minimum macOS version")
 set(CMAKE_OSX_ARCHITECTURES     "x86_64" CACHE STRING "Build architectures (Intel only)")
 
-project(LoopStationAU VERSION 0.2.0 LANGUAGES C CXX)
+project(LoopStationAU VERSION 0.3.0 LANGUAGES C CXX)
 
 # JUCE 7 requires C++17. We stay on C++17 (not C++20) because the Sierra
 # system libc++ is old; see README.md "Sierra compatibility rules".

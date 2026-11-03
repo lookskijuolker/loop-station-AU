@@ -12,6 +12,10 @@ namespace
     constexpr double seamFadeSeconds = 0.002;  // fade at the loop's start and end
     constexpr double gainSeconds     = 0.02;   // level knob smoothing
     constexpr double minLoopSeconds  = 0.05;   // shorter "loops" are treated as a mis-tap
+    constexpr double prerollSeconds  = 0.25;   // how late a synced Rec press may be
+    constexpr double lateFraction    = 0.25;   // ... as a fraction of one grid unit
+    constexpr double resyncSeconds   = 0.002;  // drift allowed before snapping to the host
+    constexpr double bpmTolerance    = 0.01;
 
     inline float moveTowards (float value, float target, float step) noexcept
     {
@@ -34,41 +38,119 @@ void LooperEngine::prepare (double newSampleRate, double maxSeconds)
     for (auto& b : buffer)
         b.assign (static_cast<size_t> (maxLength), 0.0f);
 
+    prerollLength = std::max<int64_t> (1, static_cast<int64_t> (std::ceil (prerollSeconds * sampleRate)));
+    prerollWrite = 0;
+    for (auto& b : preroll)
+        b.assign (static_cast<size_t> (prerollLength), 0.0f);
+
     envStep   = static_cast<float> (1.0 / std::max (1.0, fadeSeconds * sampleRate));
     gainCoeff = static_cast<float> (1.0 - std::exp (-1.0 / (gainSeconds * sampleRate)));
 
     state = LoopState::Empty;
-    length = position = recorded = targetLength = 0;
-    clearAfterFade = rewindAfterFade = false;
+    length = position = recorded = targetLength = armCountdown = 0;
+    clearAfterFade = rewindAfterFade = locked = false;
     playEnv = dubEnv = 0.0f;
     publish();
 }
 
 void LooperEngine::startRecording() noexcept
 {
-    length = position = recorded = targetLength = 0;
+    length = position = recorded = targetLength = armCountdown = 0;
     clearAfterFade = rewindAfterFade = false;
     playEnv = dubEnv = 0.0f;
     state = LoopState::Recording;
 }
 
-void LooperEngine::trigger (LoopAction action, double samplesPerGrid) noexcept
+void LooperEngine::startSyncedRecording (const SyncContext& sync) noexcept
+{
+    const double lateLimit = std::min (lateFraction * sync.samplesPerGrid,
+                                       static_cast<double> (prerollLength - 1));
+    lockedBpm = sync.bpm;
+    locked = true;
+
+    if (sync.samplesSinceLastLine <= lateLimit)
+    {
+        // Pressed just after a grid line: start at that line, taking the audio between
+        // the line and the press from the pre-roll buffer.
+        startRecording();
+        originPpq = sync.lastLinePpq;
+
+        const auto late = static_cast<int64_t> (std::llround (sync.samplesSinceLastLine));
+        for (int ch = 0; ch < maxChannels; ++ch)
+            for (int64_t i = 0; i < late; ++i)
+                buffer[ch][static_cast<size_t> (i)] =
+                    preroll[ch][static_cast<size_t> ((prerollWrite + prerollLength - late + i) % prerollLength)];
+        recorded = late;
+        return;
+    }
+
+    // Otherwise wait for the next grid line.
+    length = position = recorded = targetLength = 0;
+    clearAfterFade = rewindAfterFade = false;
+    playEnv = dubEnv = 0.0f;
+    originPpq = sync.nextLinePpq;
+    armCountdown = std::max<int64_t> (0, static_cast<int64_t> (std::llround (sync.samplesToNextLine)));
+    state = LoopState::Armed;
+}
+
+int64_t LooperEngine::hostPhase (double ppq, double bpm) const noexcept
+{
+    const double samplesPerQuarter = sampleRate * 60.0 / bpm;
+    double phase = std::fmod ((ppq - originPpq) * samplesPerQuarter, static_cast<double> (length));
+    if (phase < 0.0)
+        phase += static_cast<double> (length);
+    return std::min<int64_t> (length - 1, static_cast<int64_t> (phase));
+}
+
+void LooperEngine::followHost (double ppqAtBlockStart, double bpm) noexcept
+{
+    if (! locked || length <= 0 || bpm <= 0.0 || std::fabs (bpm - lockedBpm) > bpmTolerance)
+        return;
+
+    if (state != LoopState::Playing && state != LoopState::Overdubbing && state != LoopState::Stopped)
+        return;
+
+    const auto target = hostPhase (ppqAtBlockStart, bpm);
+    auto diff = std::llabs (target - position);
+    diff = std::min<int64_t> (diff, length - diff);
+
+    if (diff > static_cast<int64_t> (resyncSeconds * sampleRate))
+        position = target;
+
+    rewindAfterFade = false; // a locked loop keeps its phase, even when stopped
+    publish();
+}
+
+void LooperEngine::trigger (LoopAction action, const SyncContext& sync) noexcept
 {
     if (maxLength <= 0)
         return;
+
+    const double samplesPerGrid = sync.samplesPerGrid;
+    const bool hostLocked = locked && sync.hostPlaying && std::fabs (sync.bpm - lockedBpm) <= bpmTolerance;
 
     switch (action)
     {
         case LoopAction::RecordDub:
             switch (state)
             {
-                case LoopState::Empty:       startRecording(); break;
+                case LoopState::Empty:
+                    if (samplesPerGrid > 0.0 && sync.hostPlaying && sync.bpm > 0.0)
+                        startSyncedRecording (sync);
+                    else
+                    {
+                        locked = false;
+                        startRecording();
+                    }
+                    break;
+                case LoopState::Armed:       state = LoopState::Empty; locked = false; break; // cancel
                 case LoopState::Recording:   requestFinish (LoopState::Playing, samplesPerGrid); break;
                 case LoopState::Playing:     state = LoopState::Overdubbing; break;
                 case LoopState::Overdubbing: state = LoopState::Playing; break;
                 case LoopState::Stopped:
-                    // Start playing from the top and overdub straight away.
-                    if (playEnv <= 0.0f) position = 0;
+                    // Start playing (from the top, or in phase with the host) and overdub.
+                    if (hostLocked)         position = hostPhase (sync.ppq, sync.bpm);
+                    else if (playEnv <= 0.0f) position = 0;
                     rewindAfterFade = false;
                     state = LoopState::Overdubbing;
                     break;
@@ -78,28 +160,32 @@ void LooperEngine::trigger (LoopAction action, double samplesPerGrid) noexcept
         case LoopAction::PlayStop:
             switch (state)
             {
-                case LoopState::Empty:       break;
+                case LoopState::Empty:
+                case LoopState::Armed:       break;
                 case LoopState::Recording:   requestFinish (LoopState::Stopped, samplesPerGrid); break;
                 case LoopState::Playing:
                 case LoopState::Overdubbing: state = LoopState::Stopped; rewindAfterFade = true; break;
                 case LoopState::Stopped:
-                    if (playEnv <= 0.0f) position = 0; // fully stopped: restart from the top
-                    rewindAfterFade = false;          // still fading out: just carry on
+                    if (hostLocked)           position = hostPhase (sync.ppq, sync.bpm); // in phase
+                    else if (playEnv <= 0.0f) position = 0;  // fully stopped: from the top
+                    rewindAfterFade = false;                  // still fading out: carry on
                     state = LoopState::Playing;
                     break;
             }
             break;
 
         case LoopAction::Clear:
-            if (state == LoopState::Recording)
+            if (state == LoopState::Recording || state == LoopState::Armed)
             {
-                length = position = recorded = targetLength = 0;
+                length = position = recorded = targetLength = armCountdown = 0;
                 state = LoopState::Empty;
+                locked = false;
             }
             else if (state != LoopState::Empty)
             {
                 state = LoopState::Empty;
                 rewindAfterFade = false;
+                locked = false;
                 clearAfterFade = true; // fade out, then drop the loop
             }
             break;
@@ -152,6 +238,7 @@ void LooperEngine::finishRecording (int64_t newLength, int64_t startPosition, Lo
     {
         length = position = recorded = 0;
         state = LoopState::Empty;
+        locked = false;
         return;
     }
 
@@ -196,6 +283,14 @@ void LooperEngine::process (float* const* channels, int numChannels, int startSa
 
     for (int i = startSample; i < startSample + numSamples; ++i)
     {
+        if (state == LoopState::Armed)
+        {
+            if (armCountdown <= 0)
+                startRecording(); // this sample is on the grid line
+            else
+                --armCountdown;
+        }
+
         dryGain  += (dryGainTarget  - dryGain)  * gainCoeff;
         loopGain += (loopGainTarget - loopGain) * gainCoeff;
 
@@ -212,6 +307,8 @@ void LooperEngine::process (float* const* channels, int numChannels, int startSa
             const float in = channels[ch][i];
             float out = in * dryGain;
 
+            preroll[ch][static_cast<size_t> (prerollWrite)] = in;
+
             if (state == LoopState::Recording)
                 loop[static_cast<size_t> (recorded)] = in;
 
@@ -223,6 +320,8 @@ void LooperEngine::process (float* const* channels, int numChannels, int startSa
 
             channels[ch][i] = out;
         }
+
+        prerollWrite = (prerollWrite + 1) % prerollLength;
 
         if (state == LoopState::Recording)
         {
@@ -256,6 +355,7 @@ void LooperEngine::publish() noexcept
     uiPosition.store (position, std::memory_order_relaxed);
     uiRecorded.store (recorded, std::memory_order_relaxed);
     uiFinishing.store (targetLength > 0, std::memory_order_relaxed);
+    uiLocked.store (locked, std::memory_order_relaxed);
 }
 
 } // namespace loopstation

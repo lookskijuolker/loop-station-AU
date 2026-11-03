@@ -86,7 +86,8 @@ if the minimum OS recorded in the binary is not 10.12.
 1. **No GitHub runner has an Xcode that officially supports 10.12.** Xcode 14 and later
    officially support deployment targets from macOS 10.13. The last Xcode that supported
    10.12 was 13.x, and the runners that had it are gone. The workflow picks the
-   **oldest Xcode 15.x on `macos-14`**. Its clang and SDK still build correctly for
+   **oldest Xcode from 15.1 up on `macos-14`** (15.0.x is skipped: its linker has known
+   bugs, and JUCE 7.0.12 refuses to build with it). Its clang and SDK still build correctly for
    `-mmacosx-version-min=10.12`, and the SDK still marks which libc++ features need a
    newer OS. That is why compile errors like "'value' is unavailable: introduced in
    macOS 10.13" show up, which is what we want. This works in practice, but Apple doesn't

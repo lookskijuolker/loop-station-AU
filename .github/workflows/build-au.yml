@@ -25,11 +25,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Select oldest available Xcode
+      - name: Select oldest usable Xcode (15.1+)
+        # Oldest Xcode = closest to official 10.12 support. Xcode 15.0.x is skipped:
+        # its new linker can produce broken binaries and JUCE 7.0.12 refuses to build
+        # with it ("Please upgrade to Xcode 15.1 or higher").
         run: |
-          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | head -n1 || true)"
+          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | grep -v '/Xcode_15\.0' | sort -V | head -n1 || true)"
           if [[ -n "$XC" ]]; then
+            echo "Using $XC"
             sudo xcode-select -s "$XC/Contents/Developer"
+          else
+            echo "No Xcode 15.1+ found; keeping the runner default"
           fi
           xcodebuild -version
           clang --version
